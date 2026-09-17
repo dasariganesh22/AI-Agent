@@ -39,8 +39,12 @@ async def send_state(websocket):
         print("[SERVER] Web UI Disconnected.")
 
 async def start_server():
-    async with websockets.serve(send_state, "localhost", 8765):
-        await asyncio.Future()  
+    try:
+        async with websockets.serve(send_state, "127.0.0.1", 8765):
+            print("[SERVER] Websocket Port 8765 is OPEN.")
+            await asyncio.Future()  
+    except Exception as e:
+        print(f"\n[CRITICAL ERROR] UI Server failed to start! Port 8765 might be in use: {e}\n") 
 
 def run_server_thread():
     asyncio.run(start_server())
@@ -98,6 +102,12 @@ def run_ai_loop():
 
 if __name__ == "__main__":
     start_background_agent()
+    
+    # Register the callback so voice.py can dynamically trigger the web UI
+    import voice
+    def trigger_speaking_ui():
+        update_state("SPEAKING", tasks=1, volume=80)
+    voice.on_speech_start = trigger_speaking_ui
     
     server_thread = threading.Thread(target=run_server_thread, daemon=True)
     server_thread.start()

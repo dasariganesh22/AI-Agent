@@ -9,7 +9,12 @@ class HologramUI(QMainWindow):
         super().__init__()
         
         # 1. Window Settings: Frameless, Always on Top, and Transparent
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        # 1. Window Settings: Frameless, Always on Top, Transparent, AND Click-Through
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | 
+            Qt.WindowType.WindowStaysOnTopHint | 
+            Qt.WindowType.WindowTransparentForInput  # 🔥 THIS IS THE MAGIC FIX
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # 2. Setup the Web Engine Browser

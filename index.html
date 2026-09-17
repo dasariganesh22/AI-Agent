@@ -101,7 +101,7 @@
         }
 
         // 4. WebSocket Connection to Python Server
-        const socket = new WebSocket('ws://localhost:8765');
+        const socket = new WebSocket('ws://127.0.0.1:8765');
         const irisRing = document.getElementById('iris-ring');
         const statusText = document.getElementById('status-text');
         const irisText = document.getElementById('iris-text');

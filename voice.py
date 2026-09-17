@@ -47,6 +47,8 @@ def clean_markdown_for_speech(raw_text: str) -> str:
 # ----------------------------
 # SPEAK (HUMAN NEURAL VOICE)
 # ----------------------------
+on_speech_start = None
+
 def speak(text):
     if not text:
         return
@@ -58,6 +60,10 @@ def speak(text):
             return
 
         print("IRIS:", clean_text)
+
+        #  Trigger UI Animation BEFORE the audio blocks the thread
+        if on_speech_start:
+            on_speech_start()
 
         with speech_lock:
             filename = f"voice_{uuid.uuid4().hex}.mp3"
