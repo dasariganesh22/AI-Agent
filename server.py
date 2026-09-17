@@ -11,7 +11,7 @@ from voice import wait_for_wake_word, listen, speak, recognizer
 from ai_brain import ask_ai
 
 # ---------------------------------------------
-# 🧠 GLOBAL STATE (The Brain's current status)
+#  GLOBAL STATE (The Brain's current status)
 # ---------------------------------------------
 current_state = {
     "status": "SLEEPING", 
@@ -46,7 +46,7 @@ def run_server_thread():
     asyncio.run(start_server())
 
 # ---------------------------------------------
-# 🎙️ AI VOICE LOOP
+#  AI VOICE LOOP
 # ---------------------------------------------
 def run_ai_loop():
     print("[AI] System Booting...")
@@ -64,7 +64,7 @@ def run_ai_loop():
             
             if wait_for_wake_word(source):
                 
-                # 🔥 FIX: Speak EXACTLY ONCE before the command loop starts
+                # Speak EXACTLY ONCE before the command loop starts
                 update_state("LISTENING", tasks=1, volume=40)
                 speak("Yes boss, what can I do for you?")
                 
