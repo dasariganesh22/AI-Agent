@@ -59,7 +59,6 @@ def set_volume(command: str):
             speak(f"Volume decreased by {value} percent")
             
         else:
-            # 🔥 FIX: Set to a specific absolute value
             for _ in range(50): # Ensure volume drops to 0 first
                 pyautogui.press("volumedown")
             for _ in range(steps): # Bring it up accurately to target
@@ -131,7 +130,7 @@ def close_app(command: str):
     print(f"[IRIS Action] Attempting to close: {app_to_close}")
     speak(f"Closing {app_to_close}")
 
-    # 🔥 FIX: Special safety check for File Explorer to protect the Windows Taskbar
+    # Special safety check for File Explorer to protect the Windows Taskbar
     if "explorer" in app_to_close or "file" in app_to_close or "folder" in app_to_close:
         ps_command = "(New-Object -ComObject Shell.Application).Windows() | ForEach-Object { if ($_.FullName -like '*explorer.exe*') { $_.Quit() } }"
         subprocess.run(["powershell", "-Command", ps_command], creationflags=subprocess.CREATE_NO_WINDOW)
@@ -239,7 +238,7 @@ def search_the_web(query: str) -> str:
         return f"An error occurred while trying to search the web: {str(e)}"
 
 # ---------------------------------------------
-# 🖼️ IMAGE QUEUE & PREVIEW STATE
+#  IMAGE QUEUE & PREVIEW STATE
 # ---------------------------------------------
 IMAGE_QUEUE = []
 CURRENT_IMAGE_INDEX = 0
