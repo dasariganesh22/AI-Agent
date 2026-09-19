@@ -1,0 +1,15 @@
+google-genai
+ddgs
+psutil
+pygame
+SpeechRecognition
+pyaudio
+websockets
+edge-tts
+chromadb
+PyQt6
+PyQt6-WebEngine
+pyautogui
+selenium
+requests
+Pillow
