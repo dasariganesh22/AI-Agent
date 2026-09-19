@@ -48,7 +48,7 @@ def ask_ai(prompt: str):
     """Sends user voice commands to Gemini with full tool execution support."""
     try:
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=IRIS_TOOLS,

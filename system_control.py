@@ -4,8 +4,11 @@ import re
 from voice import speak
 import psutil
 import time
-from ddgs import DDGS
 import requests
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    from ddgs import DDGS
 from io import BytesIO
 from PIL import Image
 import subprocess
@@ -175,14 +178,18 @@ def close_app(command: str):
 
 def get_system_status() -> str:
     battery = psutil.sensors_battery()
-    plugged = "plugged in" if battery.power_plugged else "on battery power"
-    battery_percent = battery.percent
+    if battery is not None:
+        plugged = "plugged in" if battery.power_plugged else "on battery power"
+        battery_percent = battery.percent
+        battery_info = f"The system is currently {plugged} at {battery_percent}% battery."
+    else:
+        battery_info = "The system is running on desktop/AC power (no battery detected)."
 
     cpu_usage = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()
     ram_percent = ram.percent
 
-    return (f"The system is currently {plugged} at {battery_percent}% battery. "
+    return (f"{battery_info} "
             f"CPU usage is at {cpu_usage}%, and RAM usage is at {ram_percent}%.")
 
 def take_screenshot() -> str:
@@ -212,8 +219,12 @@ def search_local_file(filename: str) -> str:
                 for item in dirs + files:
                     if filename.lower() in item.lower():
                         found_paths.append(os.path.join(root, item))
-                        if len(found_paths) >= 3: break
-            if len(found_paths) >= 3: break
+                        if len(found_paths) >= 3:
+                            break
+                if len(found_paths) >= 3:
+                    break
+            if len(found_paths) >= 3:
+                break
                 
     if found_paths:
         set_last_file(found_paths[0])

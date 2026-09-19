@@ -129,6 +129,9 @@
             } else if (data.status === 'SPEAKING') {
                 irisRing.classList.add('speaking'); // This triggers the Pop-Up scale!
                 irisText.style.color = "#00aaff";
+            } else if (data.status === 'VISION') {
+                irisRing.classList.add('vision');
+                irisText.style.color = "#ffaa00";
             }
         };
 

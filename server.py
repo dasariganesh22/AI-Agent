@@ -66,39 +66,41 @@ def run_ai_loop():
         while True:
             update_state("SLEEPING", tasks=0, volume=0)
             
-            if wait_for_wake_word(source):
+            if not wait_for_wake_word(source):
+                update_state("SPEAKING", tasks=0, volume=80)
+                speak("Shutting down. Goodbye.")
+                os._exit(0)
                 
-                # Speak EXACTLY ONCE before the command loop starts
+            # Speak EXACTLY ONCE before the command loop starts
+            update_state("LISTENING", tasks=1, volume=40)
+            speak("Yes boss, what can I do for you?")
+            while True:
                 update_state("LISTENING", tasks=1, volume=40)
-                speak("Yes boss, what can I do for you?")
                 
-                while True:
-                    update_state("LISTENING", tasks=1, volume=40)
+                command = listen(source)
+                
+                if not command:
+                    continue 
+                
+                if "exit" in command or "shut down" in command or "shutdown" in command:
+                    update_state("SPEAKING", tasks=0, volume=80)
+                    speak("Shutting down. Goodbye.")
+                    os._exit(0) 
                     
-                    command = listen(source)
+                if "stop listening" in command or "go to sleep" in command:
+                    update_state("SPEAKING", tasks=0, volume=80)
+                    speak("Going to sleep.")
+                    break 
                     
-                    if not command:
-                        continue 
+                if any(phrase in command for phrase in ["look at screen", "check my screen", "analyze screen", "see my screen", "look at my screen"]):
+                    update_state("VISION", tasks=2, volume=0)
+                else:
+                    update_state("THINKING", tasks=2, volume=0)
                     
-                    if "exit" in command or "shut down" in command or "shutdown" in command:
-                        update_state("SPEAKING", tasks=0, volume=80)
-                        speak("Shutting down. Goodbye.")
-                        os._exit(0) 
-                        
-                    if "stop listening" in command or "go to sleep" in command:
-                        update_state("SPEAKING", tasks=0, volume=80)
-                        speak("Going to sleep.")
-                        break 
-                        
-                    if any(phrase in command for phrase in ["look at screen", "check my screen", "analyze screen", "see my screen", "look at my screen"]):
-                        update_state("VISION", tasks=2, volume=0)
-                    else:
-                        update_state("THINKING", tasks=2, volume=0)
-                        
-                    ask_ai(command)
-                    
-                    update_state("SPEAKING", tasks=1, volume=80)
-                    time.sleep(0.5)
+                ask_ai(command)
+                
+                update_state("SPEAKING", tasks=1, volume=80)
+                time.sleep(0.5)
 
 if __name__ == "__main__":
     start_background_agent()

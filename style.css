@@ -120,6 +120,11 @@ body {
     transform: scale(1.15); /* The Pop-Up Effect! */
     box-shadow: 0 0 60px rgba(0, 170, 255, 0.4);
 }
+.segmented-ring.vision {
+    border-color: #ffaa00;
+    box-shadow: 0 0 50px rgba(255, 170, 0, 0.4);
+    animation: spin 6s linear infinite;
+}
 
 @keyframes spin {
     100% { transform: rotate(360deg); }
