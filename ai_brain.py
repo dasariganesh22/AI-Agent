@@ -136,12 +136,44 @@ def _execute_tool(name: str, args: dict, prompt: str) -> dict:
         print(f"[IRIS Tool Error] {name} execution failed: {e}")
         return {"error": f"Tool execution failed: {type(e).__name__}"}
 
+# Bounded in-memory short-term conversation history
+# Each entry is an atomic list of types.Content objects representing one full interaction turn
+MAX_HISTORY_TURNS = 5
+_conversation_turns: list[list[types.Content]] = []
+
+def reset_conversation():
+    """Resets the short-term in-memory conversation context."""
+    global _conversation_turns
+    _conversation_turns.clear()
+
+def get_conversation_turns() -> list:
+    """Returns a shallow copy of the current short-term conversation turns."""
+    return list(_conversation_turns)
+
+def _add_turn(turn: list[types.Content]):
+    """Appends an atomic turn and ensures history remains bounded."""
+    global _conversation_turns
+    _conversation_turns.append(turn)
+    if len(_conversation_turns) > MAX_HISTORY_TURNS:
+        _conversation_turns = _conversation_turns[-MAX_HISTORY_TURNS:]
+
 def ask_ai(prompt: str):
-    """Sends user voice commands to Gemini with full two-way tool execution support."""
+    """Sends user voice commands to Gemini with conversational context and two-way tool execution."""
+    lower_prompt = prompt.lower().strip()
+    if lower_prompt in ("clear conversation", "reset conversation", "clear context", "forget conversation"):
+        reset_conversation()
+        msg = "Conversation context has been cleared."
+        speak(msg)
+        return msg
+
     try:
+        # Build contents from prior turns + current user message
+        user_content = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        request_contents = [c for turn in _conversation_turns for c in turn] + [user_content]
+
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=prompt,
+            contents=request_contents,
             config=GENERATION_CONFIG
         )
 
@@ -160,11 +192,13 @@ def ask_ai(prompt: str):
                     )
                 )
 
+            model_call_content = response.candidates[0].content if (response.candidates and response.candidates[0].content) else types.Content(role="model", parts=[types.Part(function_call=call) for call in response.function_calls])
+            tool_response_content = types.Content(role="user", parts=function_response_parts)
+
             # Send tool results back to Gemini for the final natural-language response
-            follow_up_contents = [
-                types.Content(role="user", parts=[types.Part.from_text(text=prompt)]),
-                response.candidates[0].content,
-                types.Content(role="user", parts=function_response_parts)
+            follow_up_contents = list(request_contents) + [
+                model_call_content,
+                tool_response_content
             ]
 
             final_response = client.models.generate_content(
@@ -174,12 +208,22 @@ def ask_ai(prompt: str):
             )
 
             answer = final_response.text
+            model_final_content = final_response.candidates[0].content if (final_response.candidates and final_response.candidates[0].content) else types.Content(role="model", parts=[types.Part.from_text(text=answer or "")])
+
+            # Record the atomic 4-part turn into bounded conversation history
+            _add_turn([user_content, model_call_content, tool_response_content, model_final_content])
+
             if answer:
                 speak(answer)
             return answer
 
         # Standard conversation response without tools
         answer = response.text
+        model_content = response.candidates[0].content if (response.candidates and response.candidates[0].content) else types.Content(role="model", parts=[types.Part.from_text(text=answer or "")])
+
+        # Record the atomic 2-part turn into bounded conversation history
+        _add_turn([user_content, model_content])
+
         if answer:
             speak(answer)
         return answer

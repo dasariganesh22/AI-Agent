@@ -8,7 +8,7 @@ import speech_recognition as sr
 
 from background_agent import start_background_agent
 from voice import wait_for_wake_word, listen, speak, recognizer
-from ai_brain import ask_ai
+from ai_brain import ask_ai, reset_conversation
 
 # ---------------------------------------------
 #  GLOBAL STATE (The Brain's current status)
@@ -72,6 +72,7 @@ def run_ai_loop():
                 os._exit(0)
                 
             # Speak EXACTLY ONCE before the command loop starts
+            reset_conversation()
             update_state("LISTENING", tasks=1, volume=40)
             speak("Yes boss, what can I do for you?")
             while True:
@@ -83,11 +84,13 @@ def run_ai_loop():
                     continue 
                 
                 if "exit" in command or "shut down" in command or "shutdown" in command:
+                    reset_conversation()
                     update_state("SPEAKING", tasks=0, volume=80)
                     speak("Shutting down. Goodbye.")
                     os._exit(0) 
                     
                 if "stop listening" in command or "go to sleep" in command:
+                    reset_conversation()
                     update_state("SPEAKING", tasks=0, volume=80)
                     speak("Going to sleep.")
                     break 
