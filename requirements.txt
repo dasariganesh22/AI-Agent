@@ -13,3 +13,4 @@ pyautogui
 selenium
 requests
 Pillow
+python-dotenv

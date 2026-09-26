@@ -1,10 +1,24 @@
-﻿# Python
-__pycache__/
-*.py[cod]
+﻿# Environment and Secrets
 .env
 config.py
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Memory and Storage
 iris_memory/
+
+# Screenshots and Runtime Media Outputs
+Iris_Screenshot_*.png
+screenshots/
+temp_iris_preview.png
+voice_*.mp3
+
+# Logs
 *.log
 log.txt
+
+# External Drivers
 chromedriver-win64/
-Iris_Screenshot_*.png
