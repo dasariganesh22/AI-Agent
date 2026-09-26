@@ -1,6 +1,5 @@
-from google import genai
 from google.genai import types
-from config import GEMINI_API_KEY
+from gemini_client import client
 from voice import speak
 import time
 import os
@@ -12,8 +11,6 @@ from system_control import (
 )
 from music import play_music, pause_song, resume_song, next_song, previous_song, close_music
 from memory_engine import save_memory, search_memory
-
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 def exit_assistant():
     speak("Shutting down. Goodbye.")
@@ -45,23 +42,27 @@ IRIS_TOOLS = [
     search_memory
 ]
 
+SYSTEM_INSTRUCTION = (
+    "You are Iris, a fast, intelligent neural voice assistant. "
+    "You speak your answers aloud to the user. "
+    "Rules for responses: "
+    "1. Always respond in plain, conversational text. Never use Markdown formatting, asterisks (*), bullet points, or headers (###). "
+    "2. Calibrate response length strictly to the question: For simple questions or confirmations, provide a direct 1 to 2 sentence answer. Only give detailed explanations when the user explicitly asks for a comprehensive answer or an in-depth breakdown. "
+    "3. When the user asks to look at their screen, explain visual errors, or inspect UI designs, use the analyze_screen tool."
+)
+
+GENERATION_CONFIG = types.GenerateContentConfig(
+    tools=IRIS_TOOLS,
+    system_instruction=SYSTEM_INSTRUCTION
+)
+
 def ask_ai(prompt: str):
     """Sends user voice commands to Gemini with full tool execution support."""
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=IRIS_TOOLS,
-                system_instruction=(
-                    "You are Iris, a fast, intelligent neural voice assistant. "
-                    "You speak your answers aloud to the user. "
-                    "Rules for responses: "
-                    "1. Always respond in plain, conversational text. Never use Markdown formatting, asterisks (*), bullet points, or headers (###). "
-                    "2. Calibrate response length strictly to the question: For simple questions or confirmations, provide a direct 1 to 2 sentence answer. Only give detailed explanations when the user explicitly asks for a comprehensive answer or an in-depth breakdown. "
-                    "3. When the user asks to look at their screen, explain visual errors, or inspect UI designs, use the analyze_screen tool."
-                )
-            )
+            config=GENERATION_CONFIG
         )
 
         # Check if Gemini requested to execute a tool function

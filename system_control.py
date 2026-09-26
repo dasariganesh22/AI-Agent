@@ -13,6 +13,7 @@ from io import BytesIO
 from PIL import Image
 import subprocess
 from pycaw.pycaw import AudioUtilities
+from gemini_client import client as gemini_client
 
 # Local session tracking (replaces legacy memory.py)
 current_active_app = None
@@ -360,11 +361,7 @@ def _load_current_preview() -> bool:
 def analyze_screen(query: str) -> str:
     print(f"[IRIS Action] Capturing screen and performing vision analysis for: {query}")
     try:
-        from google import genai
-        from config import GEMINI_API_KEY
-        
         screenshot = pyautogui.screenshot()
-        client = genai.Client(api_key=GEMINI_API_KEY)
         
         prompt = (
             f"You are Iris, an intelligent AI co-pilot looking at the user's computer screen. "
@@ -372,7 +369,7 @@ def analyze_screen(query: str) -> str:
             f"Keep your spoken response concise, clear, direct, and actionable."
         )
         
-        response = client.models.generate_content(
+        response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[screenshot, prompt]
         )
