@@ -139,6 +139,7 @@ def _execute_tool(name: str, args: dict, prompt: str) -> dict:
 # Bounded in-memory short-term conversation history
 # Each entry is an atomic list of types.Content objects representing one full interaction turn
 MAX_HISTORY_TURNS = 5
+MAX_TOOL_ITERATIONS = 5
 _conversation_turns: list[list[types.Content]] = []
 
 def reset_conversation():
@@ -158,7 +159,7 @@ def _add_turn(turn: list[types.Content]):
         _conversation_turns = _conversation_turns[-MAX_HISTORY_TURNS:]
 
 def ask_ai(prompt: str):
-    """Sends user voice commands to Gemini with conversational context and two-way tool execution."""
+    """Sends user voice commands to Gemini with conversational context and multi-step tool execution."""
     lower_prompt = prompt.lower().strip()
     if lower_prompt in ("clear conversation", "reset conversation", "clear context", "forget conversation"):
         reset_conversation()
@@ -169,16 +170,30 @@ def ask_ai(prompt: str):
     try:
         # Build contents from prior turns + current user message
         user_content = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        request_contents = [c for turn in _conversation_turns for c in turn] + [user_content]
+        current_turn_contents = [user_content]
+        history_prefix = [c for turn in _conversation_turns for c in turn]
 
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=request_contents,
+            model='gemini-3.8-flash',
+            contents=history_prefix + current_turn_contents,
             config=GENERATION_CONFIG
         )
 
-        # Handle tool/function calling with two-way round-trip
-        if response.function_calls:
+        iteration_count = 0
+        while response.function_calls:
+            if iteration_count >= MAX_TOOL_ITERATIONS:
+                print(f"[IRIS Agent] Reached MAX_TOOL_ITERATIONS ({MAX_TOOL_ITERATIONS}). Stopping tool execution.")
+                limit_msg = "I have reached the maximum number of tool steps for this request. Please let me know how you would like to proceed."
+                model_limit_content = types.Content(role="model", parts=[types.Part.from_text(text=limit_msg)])
+                current_turn_contents.append(model_limit_content)
+                _add_turn(current_turn_contents)
+                speak(limit_msg)
+                return limit_msg
+
+            iteration_count += 1
+            print(f"[IRIS Agent] Tool iteration {iteration_count}/{MAX_TOOL_ITERATIONS} with {len(response.function_calls)} call(s)")
+
+            # Execute all requested tools in this Gemini response
             function_response_parts = []
             for call in response.function_calls:
                 name = call.name
@@ -192,37 +207,34 @@ def ask_ai(prompt: str):
                     )
                 )
 
-            model_call_content = response.candidates[0].content if (response.candidates and response.candidates[0].content) else types.Content(role="model", parts=[types.Part(function_call=call) for call in response.function_calls])
+            model_call_content = (
+                response.candidates[0].content
+                if (response.candidates and response.candidates[0].content)
+                else types.Content(role="model", parts=[types.Part(function_call=call) for call in response.function_calls])
+            )
             tool_response_content = types.Content(role="user", parts=function_response_parts)
 
-            # Send tool results back to Gemini for the final natural-language response
-            follow_up_contents = list(request_contents) + [
-                model_call_content,
-                tool_response_content
-            ]
+            current_turn_contents.append(model_call_content)
+            current_turn_contents.append(tool_response_content)
 
-            final_response = client.models.generate_content(
+            # Request next Gemini turn (either next tool call or final text)
+            response = client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=follow_up_contents,
+                contents=history_prefix + current_turn_contents,
                 config=GENERATION_CONFIG
             )
 
-            answer = final_response.text
-            model_final_content = final_response.candidates[0].content if (final_response.candidates and final_response.candidates[0].content) else types.Content(role="model", parts=[types.Part.from_text(text=answer or "")])
-
-            # Record the atomic 4-part turn into bounded conversation history
-            _add_turn([user_content, model_call_content, tool_response_content, model_final_content])
-
-            if answer:
-                speak(answer)
-            return answer
-
-        # Standard conversation response without tools
+        # Standard final conversation response (after tool loop completes or if no tools were called)
         answer = response.text
-        model_content = response.candidates[0].content if (response.candidates and response.candidates[0].content) else types.Content(role="model", parts=[types.Part.from_text(text=answer or "")])
+        model_final_content = (
+            response.candidates[0].content
+            if (response.candidates and response.candidates[0].content)
+            else types.Content(role="model", parts=[types.Part.from_text(text=answer or "")])
+        )
+        current_turn_contents.append(model_final_content)
 
-        # Record the atomic 2-part turn into bounded conversation history
-        _add_turn([user_content, model_content])
+        # Record the complete atomic turn into bounded conversation history
+        _add_turn(current_turn_contents)
 
         if answer:
             speak(answer)
