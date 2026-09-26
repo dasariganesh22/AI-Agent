@@ -5,7 +5,7 @@ import os
 import uuid
 import time
 import threading
-import subprocess
+import edge_tts
 import re
 
 # ----------------------------
@@ -68,22 +68,28 @@ def speak(text):
         with speech_lock:
             filename = f"voice_{uuid.uuid4().hex}.mp3"
             voice_model = "en-GB-SoniaNeural" 
-            command = f'edge-tts --voice "{voice_model}" --text "{clean_text}" --rate=+2% --write-media "{filename}"'
-            
-            subprocess.run(command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            communicate = edge_tts.Communicate(clean_text, voice_model, rate="+2%")
+            communicate.save_sync(filename)
 
             if os.path.exists(filename):
-                pygame.mixer.music.load(filename)
-                pygame.mixer.music.play()
-                
-                while pygame.mixer.music.get_busy():
-                    time.sleep(0.05)
-                    
-                pygame.mixer.music.unload()
                 try:
-                    os.remove(filename)
-                except:
-                    pass
+                    pygame.mixer.music.load(filename)
+                    pygame.mixer.music.play()
+                    
+                    while pygame.mixer.music.get_busy():
+                        time.sleep(0.05)
+                        
+                    pygame.mixer.music.unload()
+                finally:
+                    for _ in range(5):
+                        try:
+                            if os.path.exists(filename):
+                                os.remove(filename)
+                            break
+                        except PermissionError:
+                            time.sleep(0.05)
+                        except Exception:
+                            break
                 
                 # Echo Guard Buffer
                 time.sleep(0.4)
