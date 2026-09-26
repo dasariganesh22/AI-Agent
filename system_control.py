@@ -12,6 +12,7 @@ except ImportError:
 from io import BytesIO
 from PIL import Image
 import subprocess
+from pycaw.pycaw import AudioUtilities
 
 # Local session tracking (replaces legacy memory.py)
 current_active_app = None
@@ -34,50 +35,81 @@ def get_last_file():
 # ---------------------------------------------
 # HARDWARE & SYSTEM AUTOMATION
 # ---------------------------------------------
+def _get_volume_endpoint():
+    """Retrieves the default Windows CoreAudio endpoint volume interface."""
+    speakers = AudioUtilities.GetSpeakers()
+    if speakers is None:
+        raise RuntimeError("No active audio output device found.")
+    return speakers.EndpointVolume
+
+def get_volume() -> str:
+    """
+    Reads and returns the current system master volume percentage and mute status.
+    """
+    try:
+        endpoint = _get_volume_endpoint()
+        percent = round(endpoint.GetMasterVolumeLevelScalar() * 100)
+        is_muted = bool(endpoint.GetMute())
+        if is_muted:
+            return f"Current system volume is {percent} percent and muted."
+        return f"Current system volume is {percent} percent."
+    except Exception as e:
+        print(f"[IRIS Error] Failed to get volume: {e}")
+        return "I could not retrieve the current system volume."
+
 def set_volume(command: str):
-    command = command.lower()
-    numbers = re.findall(r'\d+', command)
+    """
+    Adjusts system master volume using Windows CoreAudio.
+    Supports volume up/down, setting exact percentages, and explicit mute/unmute.
+    """
+    try:
+        command = command.lower()
+        endpoint = _get_volume_endpoint()
 
-    if "mute" in command:
-        pyautogui.press("volumemute")
-        speak("Volume muted")
-        return
-    elif "unmute" in command:
-        pyautogui.press("volumemute")
-        speak("Volume unmuted")
-        return
+        # Handle explicit mute/unmute (check 'unmute' before 'mute')
+        if "unmute" in command:
+            endpoint.SetMute(0, None)
+            speak("Volume unmuted")
+            return
+        elif "mute" in command:
+            endpoint.SetMute(1, None)
+            speak("Volume muted")
+            return
 
-    if numbers:
-        value = int(numbers[0])
-        steps = value // 2
+        current_scalar = endpoint.GetMasterVolumeLevelScalar()
+        current_percent = round(current_scalar * 100)
+        numbers = re.findall(r'\d+', command)
 
-        if "up" in command or "increase" in command:
-            for _ in range(steps):
-                pyautogui.press("volumeup")
-            speak(f"Volume increased by {value} percent")
-            
-        elif "down" in command or "decrease" in command:
-            for _ in range(steps):
-                pyautogui.press("volumedown")
-            speak(f"Volume decreased by {value} percent")
-            
+        if numbers:
+            value = int(numbers[0])
+            if "up" in command or "increase" in command:
+                target_percent = min(100, current_percent + value)
+                endpoint.SetMasterVolumeLevelScalar(target_percent / 100.0, None)
+                speak(f"Volume increased by {value} percent")
+            elif "down" in command or "decrease" in command:
+                target_percent = max(0, current_percent - value)
+                endpoint.SetMasterVolumeLevelScalar(target_percent / 100.0, None)
+                speak(f"Volume decreased by {value} percent")
+            else:
+                target_percent = max(0, min(100, value))
+                endpoint.SetMasterVolumeLevelScalar(target_percent / 100.0, None)
+                speak(f"Volume set to {target_percent} percent")
         else:
-            for _ in range(50): # Ensure volume drops to 0 first
-                pyautogui.press("volumedown")
-            for _ in range(steps): # Bring it up accurately to target
-                pyautogui.press("volumeup")
-            speak(f"Volume set to {value} percent")
+            # Relative adjustment without explicit numbers (default 10% step)
+            if "up" in command or "increase" in command:
+                target_percent = min(100, current_percent + 10)
+                endpoint.SetMasterVolumeLevelScalar(target_percent / 100.0, None)
+                speak("Volume increased")
+            elif "down" in command or "decrease" in command:
+                target_percent = max(0, current_percent - 10)
+                endpoint.SetMasterVolumeLevelScalar(target_percent / 100.0, None)
+                speak("Volume decreased")
+            else:
+                speak("Please specify how you would like me to adjust the volume.")
 
-    else:
-        # No numbers provided (e.g. "turn volume up")
-        if "up" in command or "increase" in command:
-            for _ in range(5): # Default 10% jump
-                pyautogui.press("volumeup")
-            speak("Volume increased")
-        elif "down" in command or "decrease" in command:
-            for _ in range(5): # Default 10% jump
-                pyautogui.press("volumedown")
-            speak("Volume decreased")
+    except Exception as e:
+        print(f"[IRIS Error] Failed to set volume: {e}")
+        speak("I encountered an issue adjusting the volume.")
 
 
 def open_app(command: str):

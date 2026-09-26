@@ -6,7 +6,7 @@ import time
 import os
 from background_agent import set_reminder
 from system_control import (
-    open_app, close_app, set_volume, get_system_status, take_screenshot, 
+    open_app, close_app, set_volume, get_volume, get_system_status, take_screenshot, 
     search_local_file, search_the_web, find_image, show_next_image, 
     download_current_image, analyze_screen
 )
@@ -24,6 +24,7 @@ IRIS_TOOLS = [
     open_app,
     close_app,
     set_volume,
+    get_volume,
     play_music,
     pause_song,
     resume_song,
@@ -77,6 +78,9 @@ def ask_ai(prompt: str):
                     close_app(args.get("command", prompt))
                 elif name == "set_volume":
                     set_volume(args.get("command", prompt))
+                elif name == "get_volume":
+                    result = get_volume()
+                    speak(result)
                 elif name == "get_system_status":
                     status = get_system_status()
                     speak(status)
