@@ -56,8 +56,88 @@ GENERATION_CONFIG = types.GenerateContentConfig(
     system_instruction=SYSTEM_INSTRUCTION
 )
 
+def _execute_tool(name: str, args: dict, prompt: str) -> dict:
+    """Executes a requested IRIS tool safely and returns a response dictionary."""
+    try:
+        # System & App Controls
+        if name == "open_app":
+            res = open_app(args.get("command", prompt))
+            return {"status": "success", "result": res or f"Opened {args.get('command', prompt)}"}
+        elif name == "close_app":
+            res = close_app(args.get("command", prompt))
+            return {"status": "success", "result": res or f"Closed {args.get('command', prompt)}"}
+        elif name == "set_volume":
+            res = set_volume(args.get("command", prompt))
+            return {"status": "success", "result": res or "Volume adjusted successfully"}
+        elif name == "get_volume":
+            return {"volume": get_volume()}
+        elif name == "get_system_status":
+            return {"system_status": get_system_status()}
+        elif name == "take_screenshot":
+            return {"result": take_screenshot()}
+        elif name == "search_local_file":
+            return {"result": search_local_file(args.get("filename", prompt))}
+        elif name == "search_the_web":
+            return {"result": search_the_web(args.get("query", prompt))}
+        elif name == "exit_assistant":
+            exit_assistant()
+            return {"status": "exiting"}
+
+        # Vision Tool Execution
+        elif name == "analyze_screen":
+            query_text = args.get("query", prompt)
+            speak("Analyzing your screen now.")
+            return {"screen_analysis": analyze_screen(query_text)}
+
+        # Music Controls
+        elif name == "play_music":
+            res = play_music(args.get("query", prompt))
+            return {"status": "success", "result": res or f"Playing {args.get('query', prompt)}"}
+        elif name == "pause_song":
+            pause_song()
+            return {"status": "success", "result": "Music paused"}
+        elif name == "resume_song":
+            resume_song()
+            return {"status": "success", "result": "Music resumed"}
+        elif name == "next_song":
+            next_song()
+            return {"status": "success", "result": "Skipped to next song"}
+        elif name == "previous_song":
+            previous_song()
+            return {"status": "success", "result": "Returned to previous song"}
+        elif name == "close_music":
+            close_music()
+            return {"status": "success", "result": "Music closed"}
+
+        # Reminders & Images
+        elif name == "set_reminder":
+            seconds = args.get("seconds", 10)
+            msg = args.get("message", "Timer completed")
+            return {"result": set_reminder(seconds=seconds, message=msg)}
+        elif name == "find_image":
+            return {"result": find_image(args.get("query", prompt))}
+        elif name == "show_next_image":
+            return {"result": show_next_image()}
+        elif name == "download_current_image":
+            return {"result": download_current_image()}
+
+        # Long-Term Memory Tools
+        elif name == "save_memory":
+            fact = args.get("fact", prompt)
+            return {"result": save_memory(fact)}
+        elif name == "search_memory":
+            query_text = args.get("query", prompt)
+            return {"memory_results": search_memory(query_text)}
+
+        else:
+            return {"error": f"Unknown tool: {name}"}
+
+    except Exception as e:
+        print(f"[IRIS Tool Error] {name} execution failed: {e}")
+        return {"error": f"Tool execution failed: {type(e).__name__}"}
+
 def ask_ai(prompt: str):
-    """Sends user voice commands to Gemini with full tool execution support."""
+    """Sends user voice commands to Gemini with full two-way tool execution support."""
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
@@ -65,102 +145,44 @@ def ask_ai(prompt: str):
             config=GENERATION_CONFIG
         )
 
-        # Check if Gemini requested to execute a tool function
+        # Handle tool/function calling with two-way round-trip
         if response.function_calls:
+            function_response_parts = []
             for call in response.function_calls:
                 name = call.name
-                args = call.args
+                args = call.args or {}
                 print(f"[IRIS Tool Triggered] Executing: {name} with args: {args}")
-
-                # System & App Controls
-                if name == "open_app":
-                    open_app(args.get("command", prompt))
-                elif name == "close_app":
-                    close_app(args.get("command", prompt))
-                elif name == "set_volume":
-                    set_volume(args.get("command", prompt))
-                elif name == "get_volume":
-                    result = get_volume()
-                    speak(result)
-                elif name == "get_system_status":
-                    status = get_system_status()
-                    speak(status)
-                elif name == "take_screenshot":
-                    result = take_screenshot()
-                    speak(result)
-                elif name == "search_local_file":
-                    result = search_local_file(args.get("filename", prompt))
-                    speak(result)
-                elif name == "search_the_web":
-                    result = search_the_web(args.get("query", prompt))
-                    speak(result)
-                elif name == "exit_assistant":
-                    exit_assistant()
-                
-                # Vision Tool Execution
-                elif name == "analyze_screen":
-                    query_text = args.get("query", prompt)
-                    speak("Analyzing your screen now.")
-                    result = analyze_screen(query_text)
-                    speak(result)
-                
-
-                # Music Controls
-                elif name == "play_music":
-                    play_music(args.get("query", prompt))
-                elif name == "pause_song":
-                    pause_song()
-                elif name == "resume_song":
-                    resume_song()
-                elif name == "next_song":
-                    next_song()
-                elif name == "previous_song":
-                    previous_song()
-                elif name == "close_music":
-                    close_music()
-
-                # Reminders & Images
-                elif name == "set_reminder":
-                    seconds = args.get("seconds", 10)
-                    msg = args.get("message", "Timer completed")
-                    result = set_reminder(seconds=seconds, message=msg)
-                    speak(result)
-                elif name == "find_image":
-                    result = find_image(args.get("query", prompt))
-                    speak(result)
-                elif name == "show_next_image":
-                    result = show_next_image()
-                    speak(result)
-                elif name == "download_current_image":
-                    result = download_current_image()
-                    speak(result)
-
-                # 🧠 LONG-TERM MEMORY TOOLS
-                elif name == "save_memory":
-                    fact = args.get("fact", prompt)
-                    speak("Saving that to my long-term memory.")
-                    result = save_memory(fact)
-                    print(result)
-                    
-                elif name == "search_memory":
-                    query_text = args.get("query", prompt)
-                    speak("Searching my memory banks.")
-                    result = search_memory(query_text)
-                    
-                    # Pass the raw memory data back to Gemini so she can formulate a natural spoken answer
-                    follow_up = client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=f"You just searched your memory and found this data: '{result}'. Answer the user's original query: '{prompt}'. Speak naturally and concisely."
+                tool_result = _execute_tool(name, args, prompt)
+                function_response_parts.append(
+                    types.Part.from_function_response(
+                        name=name,
+                        response=tool_result
                     )
-                    speak(follow_up.text)
+                )
 
-            return "Tool executed successfully."
+            # Send tool results back to Gemini for the final natural-language response
+            follow_up_contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text=prompt)]),
+                response.candidates[0].content,
+                types.Content(role="user", parts=function_response_parts)
+            ]
 
-        # Standard conversation response
+            final_response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=follow_up_contents,
+                config=GENERATION_CONFIG
+            )
+
+            answer = final_response.text
+            if answer:
+                speak(answer)
+            return answer
+
+        # Standard conversation response without tools
         answer = response.text
         if answer:
             speak(answer)
-        return
+        return answer
 
     except Exception as e:
         error_str = str(e)
@@ -169,3 +191,4 @@ def ask_ai(prompt: str):
             speak("Rate limit reached. Please wait a moment before sending another request.")
         else:
             speak("I encountered an issue processing that request.")
+        return None
