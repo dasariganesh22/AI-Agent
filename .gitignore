@@ -1,0 +1,10 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.env
+config.py
+iris_memory/
+*.log
+log.txt
+chromedriver-win64/
+Iris_Screenshot_*.png
