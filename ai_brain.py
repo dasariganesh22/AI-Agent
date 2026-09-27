@@ -1,4 +1,4 @@
-from google.genai import types
+from google.genai import errors, types
 from gemini_client import client
 from voice import speak
 import time
@@ -140,6 +140,19 @@ def _execute_tool(name: str, args: dict, prompt: str) -> dict:
 # Each entry is an atomic list of types.Content objects representing one full interaction turn
 MAX_HISTORY_TURNS = 5
 MAX_TOOL_ITERATIONS = 5
+MAX_API_ATTEMPTS = 2
+RETRY_BACKOFF_SECONDS = 0.5
+RETRYABLE_STATUS_CODES = {500, 502, 503, 504}
+NON_RETRYABLE_STATUS_CODES = {400, 401, 403, 404, 429}
+
+try:
+    import httpx
+    HTTPX_NETWORK_ERRORS = (httpx.RequestError, httpx.TimeoutException)
+except ImportError:
+    HTTPX_NETWORK_ERRORS = ()
+
+TRANSIENT_NETWORK_ERRORS = (ConnectionError, TimeoutError, OSError) + HTTPX_NETWORK_ERRORS
+
 _conversation_turns: list[list[types.Content]] = []
 
 def reset_conversation():
@@ -158,8 +171,79 @@ def _add_turn(turn: list[types.Content]):
     if len(_conversation_turns) > MAX_HISTORY_TURNS:
         _conversation_turns = _conversation_turns[-MAX_HISTORY_TURNS:]
 
+def _is_retryable_error(e: Exception) -> bool:
+    """Determines whether a Gemini API error is plausibly temporary and eligible for retry."""
+    if isinstance(e, errors.APIError):
+        code = getattr(e, "code", None)
+        if code in RETRYABLE_STATUS_CODES:
+            return True
+        if code in NON_RETRYABLE_STATUS_CODES:
+            return False
+        if isinstance(e, errors.ServerError):
+            return True
+        return False
+
+    if isinstance(e, TRANSIENT_NETWORK_ERRORS):
+        return True
+
+    # Fallback string pattern inspection
+    err_str = str(e).lower()
+    if any(k in err_str for k in ("503", "502", "504", "500", "service unavailable", "timeout", "connection reset", "connection refused")):
+        if not any(k in err_str for k in ("429", "401", "403", "quota", "resource_exhausted", "unauthenticated", "permission_denied")):
+            return True
+
+    return False
+
+def _get_error_message(e: Exception) -> str:
+    """Translates a Gemini exception into a natural, concise spoken message without exposing secrets."""
+    if isinstance(e, errors.APIError):
+        code = getattr(e, "code", None)
+        status = getattr(e, "status", "")
+        if code == 429 or status == "RESOURCE_EXHAUSTED":
+            return "The AI service rate limit has been reached. Please try again later."
+        if code in (401, 403) or status in ("UNAUTHENTICATED", "PERMISSION_DENIED"):
+            return "The AI service configuration needs attention."
+        if code in RETRYABLE_STATUS_CODES or isinstance(e, errors.ServerError):
+            return "I'm having trouble reaching the AI service right now. Please try again."
+
+    if isinstance(e, TRANSIENT_NETWORK_ERRORS):
+        return "I'm having trouble reaching the AI service right now. Please try again."
+
+    err_str = str(e).lower()
+    if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+        return "The AI service rate limit has been reached. Please try again later."
+    if "401" in err_str or "403" in err_str or "unauthenticated" in err_str or "permission_denied" in err_str or "api_key" in err_str:
+        return "The AI service configuration needs attention."
+    if any(k in err_str for k in ("503", "502", "504", "500", "unavailable", "timeout", "connection")):
+        return "I'm having trouble reaching the AI service right now. Please try again."
+
+    return "I couldn't complete that request right now."
+
+def _generate_with_retry(contents, model: str = 'gemini-3.8-flash'):
+    """Executes client.models.generate_content with bounded retry for transient errors."""
+    for attempt in range(1, MAX_API_ATTEMPTS + 1):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=GENERATION_CONFIG
+            )
+        except Exception as e:
+            if attempt < MAX_API_ATTEMPTS and _is_retryable_error(e):
+                status_info = getattr(e, "code", None) or getattr(e, "status", None) or type(e).__name__
+                print(f"[IRIS Gemini] Attempt {attempt}/{MAX_API_ATTEMPTS} failed with {status_info}. Retrying...")
+                time.sleep(RETRY_BACKOFF_SECONDS)
+                continue
+
+            if attempt > 1:
+                print(f"[IRIS Gemini] Attempt {attempt}/{MAX_API_ATTEMPTS} failed. Giving up.")
+            else:
+                status_info = getattr(e, "code", None) or getattr(e, "status", None) or type(e).__name__
+                print(f"[IRIS Gemini] Request failed with {status_info} (not retryable).")
+            raise e
+
 def ask_ai(prompt: str):
-    """Sends user voice commands to Gemini with conversational context and multi-step tool execution."""
+    """Sends user voice commands to Gemini with conversational context, reliability retries, and multi-step tool execution."""
     lower_prompt = prompt.lower().strip()
     if lower_prompt in ("clear conversation", "reset conversation", "clear context", "forget conversation"):
         reset_conversation()
@@ -173,11 +257,7 @@ def ask_ai(prompt: str):
         current_turn_contents = [user_content]
         history_prefix = [c for turn in _conversation_turns for c in turn]
 
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=history_prefix + current_turn_contents,
-            config=GENERATION_CONFIG
-        )
+        response = _generate_with_retry(history_prefix + current_turn_contents)
 
         iteration_count = 0
         while response.function_calls:
@@ -217,12 +297,8 @@ def ask_ai(prompt: str):
             current_turn_contents.append(model_call_content)
             current_turn_contents.append(tool_response_content)
 
-            # Request next Gemini turn (either next tool call or final text)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=history_prefix + current_turn_contents,
-                config=GENERATION_CONFIG
-            )
+            # Request next Gemini turn through the retry helper
+            response = _generate_with_retry(history_prefix + current_turn_contents)
 
         # Standard final conversation response (after tool loop completes or if no tools were called)
         answer = response.text
@@ -241,10 +317,8 @@ def ask_ai(prompt: str):
         return answer
 
     except Exception as e:
-        error_str = str(e)
-        print("[IRIS Error]:", error_str)
-        if "429" in error_str:
-            speak("Rate limit reached. Please wait a moment before sending another request.")
-        else:
-            speak("I encountered an issue processing that request.")
+        error_msg = _get_error_message(e)
+        status_info = getattr(e, "code", None) or type(e).__name__
+        print(f"[IRIS Error] Request failed ({status_info}): {error_msg}")
+        speak(error_msg)
         return None
