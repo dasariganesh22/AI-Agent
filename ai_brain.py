@@ -3,6 +3,7 @@ from gemini_client import client
 from voice import speak
 import time
 import os
+import re
 from background_agent import set_reminder
 from system_control import (
     open_app, close_app, set_volume, get_volume, get_system_status, take_screenshot, 
@@ -136,6 +137,132 @@ def _execute_tool(name: str, args: dict, prompt: str) -> dict:
         print(f"[IRIS Tool Error] {name} execution failed: {e}")
         return {"error": f"Tool execution failed: {type(e).__name__}"}
 
+# Agent Safety & Tool Guardrails
+READ_ONLY_TOOLS = {
+    "get_volume",
+    "get_system_status",
+    "take_screenshot",
+    "search_local_file",
+    "search_the_web",
+    "find_image",
+    "show_next_image",
+    "analyze_screen",
+    "search_memory",
+}
+
+CONSEQUENTIAL_TOOLS = {
+    "close_app": ("close", "quit", "kill", "terminate", "shut down", "shutdown", "stop"),
+    "exit_assistant": ("exit", "quit", "shutdown", "shut down", "goodbye", "bye", "turn off", "terminate", "close assistant"),
+    "download_current_image": ("download", "save", "keep", "store", "fetch", "export"),
+    "save_memory": ("remember", "save", "note", "memorize", "store", "keep in mind", "remind me that"),
+}
+
+SIDE_EFFECTING_TOOLS = {
+    "open_app",
+    "close_app",
+    "set_volume",
+    "play_music",
+    "pause_song",
+    "resume_song",
+    "next_song",
+    "previous_song",
+    "close_music",
+    "exit_assistant",
+    "set_reminder",
+    "download_current_image",
+    "save_memory",
+}
+
+def _normalize_tool_call_key(name: str, args: dict) -> tuple:
+    """Normalizes tool name and arguments for duplicate detection."""
+    normalized_items = []
+    if isinstance(args, dict):
+        for k, v in sorted(args.items()):
+            norm_v = str(v).strip().lower() if isinstance(v, str) else v
+            normalized_items.append((k, norm_v))
+    return (name, tuple(normalized_items))
+
+DISQUALIFYING_INTENT_PATTERNS = [
+    # 1. Negation
+    r"\b(?:don't|dont|do\s+not|never|stop|not|won't|wont|wouldn't|wouldnt|shouldn't|shouldnt|cannot|can't|cant)\b",
+    # 2. Hypotheticals / questions about process / conditionals
+    r"\b(?:how\s+(?:would|do|can|could|to)|what\s+if|what\s+happens\s+if|explain\s+how|why\s+(?:would|do|should)|should\s+(?:i|we|you)|if\s+(?:i|you|we))\b",
+    # 3. Uncertainty / Hedging
+    r"\b(?:maybe|perhaps|possibly|might|probably|could\s+be|should\s+probably)\b",
+    # 4. Mention-only / Discussion of action
+    r"\b(?:thinking\s+about|thought\s+about|talking\s+about|wondering\s+about|usually|later|yesterday|earlier|already)\b",
+]
+
+CONSEQUENTIAL_INTENT_PATTERNS = {
+    "close_app": [
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?(?:close|quit|kill|terminate|shut\s*down)\s+(?:the\s+(?:app|application|program|window)\s+)?(.+?)(?:\s+please)?$",
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+)?(?:close|quit|kill|terminate|shut\s*down)\s+(?:it|this|the\s+current\s+app|the\s+active\s+window)(?:\s+please)?$",
+    ],
+    "exit_assistant": [
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?(?:exit|quit|shut\s*down|shutdown|turn\s+(?:yourself\s+)?off)(?:\s+(?:iris|assistant|yourself|the\s+assistant))?(?:\s+please)?$",
+        r"^(?:goodbye|bye|bye\s+bye|see\s+you(?:\s+later)?)(?:\s+iris)?$",
+    ],
+    "download_current_image": [
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?(?:download|save)\s+(?:the\s+current\s+|this\s+|the\s+)?(?:image|photo|picture|file|it)(?:\s+please)?$",
+    ],
+    "save_memory": [
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?(?:remember\s+that|note\s+that|keep\s+in\s+mind\s+that)\b.+$",
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?(?:remember\s+this|save\s+(?:this\s+)?(?:as\s+a\s+)?memory|save\s+this\s+(?:as\s+a\s+)?note)(?:\s+please)?$",
+        r"^(?:(?:hey\s+|hi\s+)?iris\s+)?(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+want\s+you\s+to\s+)?save\s+(?:this\s+)?(?:as\s+a\s+)?memory\s*:\s*.+$",
+    ],
+}
+
+def _is_explicit_consequential_request(name: str, prompt: str, args: dict = None) -> bool:
+    """
+    Conservatively checks if the user's prompt explicitly requests a consequential action.
+    Rejects negations, hypotheticals, uncertainty, hedging, and mention-only statements.
+    """
+    if name not in CONSEQUENTIAL_TOOLS:
+        return True
+
+    clean_prompt = re.sub(r"[.!?,;:]+$", "", prompt.strip()).strip().lower()
+
+    # 1. Disqualification check: reject negation, questions, hypotheticals, ambiguity
+    for disq_pat in DISQUALIFYING_INTENT_PATTERNS:
+        if re.search(disq_pat, clean_prompt):
+            return False
+
+    # 2. Affirmative intent pattern matching for the requested tool
+    patterns = CONSEQUENTIAL_INTENT_PATTERNS.get(name, [])
+    for pat in patterns:
+        if re.match(pat, clean_prompt):
+            return True
+
+    return False
+
+def _authorize_tool(name: str, args: dict, prompt: str, executed_side_effects: set) -> dict:
+    """
+    Authorizes tool execution based on safety classification, explicit intent, and duplicate guardrails.
+    Returns:
+        {"allowed": True} if authorized to execute.
+        {"allowed": False, "status": "blocked", "reason": <reason>} if blocked.
+    """
+    # 1. Consequential tool explicit confirmation check
+    if name in CONSEQUENTIAL_TOOLS:
+        if not _is_explicit_consequential_request(name, prompt, args):
+            return {
+                "allowed": False,
+                "status": "blocked",
+                "reason": f"Action '{name}' requires explicit confirmation from the user."
+            }
+
+    # 2. Duplicate side-effect check
+    if name in SIDE_EFFECTING_TOOLS:
+        call_key = _normalize_tool_call_key(name, args)
+        if call_key in executed_side_effects:
+            return {
+                "allowed": False,
+                "status": "blocked",
+                "reason": "Duplicate side-effecting tool call in the same request."
+            }
+
+    return {"allowed": True}
+
 # Bounded in-memory short-term conversation history
 # Each entry is an atomic list of types.Content objects representing one full interaction turn
 MAX_HISTORY_TURNS = 5
@@ -256,6 +383,7 @@ def ask_ai(prompt: str):
         user_content = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
         current_turn_contents = [user_content]
         history_prefix = [c for turn in _conversation_turns for c in turn]
+        executed_side_effects = set()
 
         response = _generate_with_retry(history_prefix + current_turn_contents)
 
@@ -273,13 +401,26 @@ def ask_ai(prompt: str):
             iteration_count += 1
             print(f"[IRIS Agent] Tool iteration {iteration_count}/{MAX_TOOL_ITERATIONS} with {len(response.function_calls)} call(s)")
 
-            # Execute all requested tools in this Gemini response
+            # Authorize and execute requested tools in this Gemini response
             function_response_parts = []
             for call in response.function_calls:
                 name = call.name
-                args = call.args or {}
-                print(f"[IRIS Tool Triggered] Executing: {name} with args: {args}")
-                tool_result = _execute_tool(name, args, prompt)
+                args = dict(call.args) if call.args else {}
+                auth = _authorize_tool(name, args, prompt, executed_side_effects)
+                if not auth.get("allowed"):
+                    reason = auth.get("reason", "Action not authorized.")
+                    if "Duplicate" in reason:
+                        print(f"[IRIS Guard] Blocked duplicate tool call: {name}")
+                    else:
+                        print(f"[IRIS Guard] Blocked unconfirmed tool: {name} ({reason})")
+                    tool_result = {"status": "blocked", "reason": reason}
+                else:
+                    print(f"[IRIS Guard] Allowed tool: {name}")
+                    print(f"[IRIS Tool Triggered] Executing: {name} with args: {args}")
+                    tool_result = _execute_tool(name, args, prompt)
+                    if name in SIDE_EFFECTING_TOOLS:
+                        executed_side_effects.add(_normalize_tool_call_key(name, args))
+
                 function_response_parts.append(
                     types.Part.from_function_response(
                         name=name,
